@@ -1,0 +1,44 @@
+version: '3.6'
+services:
+  elasticsearch:
+    image: elasticsearch:7.4.0
+    container_name: elasticsearch
+    ports: ['9200:9200']
+    networks: ['stack']
+    environment:
+      - discovery.type=single-node
+    healthcheck:
+      test: curl --cacert /usr/share/elasticsearch/config/certs/ca/ca.crt -s https://localhost:9200 >/dev/null; if [[ $$? == 52 ]]; then echo 0; else echo 1; fi
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kibana:
+    image: kibana:7.4.0
+    container_name: kibana
+    ports: ['5601:5601']
+    networks: ['stack']
+    depends_on: ['elasticsearch']
+    healthcheck:
+      test: curl --cacert /usr/share/elasticsearch/config/certs/ca/ca.crt -s https://localhost:5601 >/dev/null; if [[ $$? == 52 ]]; then echo 0; else echo 1; fi
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  apm-server:
+    image: elastic/apm-server:7.4.0
+    container_name: apm_server
+    ports: ['8200:8200']
+    networks: ['stack']
+    command: --strict.perms=false -e  # -e flag to log to stderr and disable syslog/file output
+    depends_on: ['elasticsearch', 'kibana']
+    healthcheck:
+      test: curl --cacert /usr/share/elasticsearch/config/certs/ca/ca.crt -s https://localhost:8200/healthcheck >/dev/null; if [[ $$? == 52 ]]; then echo 0; else echo 1; fi
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+networks: {stack: {}}
+# use docker volume to persist ES data outside of a container.
+volumes:
+  es_data:
