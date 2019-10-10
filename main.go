@@ -3,17 +3,23 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"go.elastic.co/apm/module/apmgorilla"
 	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
+	"go.elastic.co/apm/module/apmgorilla"
+	"go.elastic.co/apm/module/apmlogrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+func init() {
+	// apmlogrus.Hook will send "error", "panic", and "fatal" level log messages to Elastic APM.
+	log.AddHook(&apmlogrus.Hook{})
+}
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
@@ -25,13 +31,32 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 }
 
+func handlerHi(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	name := query.Get("name")
+	if name == "" {
+		name = "Guest"
+	}
+	log.Printf("Received request for %s\n", name)
+	w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
+}
+
+type NotFoundLogger struct{}
+
+func (nfl *NotFoundLogger) ServeHTTP(http.ResponseWriter, *http.Request) {
+	log.Errorln("Not found!")
+}
+
 func main() {
 	// Create Server and Route Handlers
 	r := mux.NewRouter()
 
+	r.NotFoundHandler = &NotFoundLogger{}
+	apmgorilla.Instrument(r)
+
 	r.HandleFunc("/", handler)
 
-	r.Use(apmgorilla.Middleware())
+	r.HandleFunc("/hi", handlerHi)
 
 	srv := &http.Server{
 		Handler:      r,
