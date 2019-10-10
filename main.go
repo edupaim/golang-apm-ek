@@ -23,23 +23,24 @@ func init() {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	traceContextFields := apmlogrus.TraceContext(r.Context())
-	log.WithFields(traceContextFields).Debug("handling request")
+	contextLog := log.WithFields(traceContextFields)
 	query := r.URL.Query()
 	name := query.Get("name")
 	if name == "" {
 		name = "Guest"
 	}
-	log.Printf("Received request for %s\n", name)
+	contextLog.Printf("Received request for %s\n", name)
 	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 	if err != nil {
-		log.Errorln(err.Error())
+		contextLog.Errorln(err.Error())
 	}
 }
 
 type NotFoundLogger struct{}
 
 func (nfl *NotFoundLogger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Errorln("Not Found!")
+	traceContextFields := apmlogrus.TraceContext(r.Context())
+	log.WithFields(traceContextFields).Errorln("Not Found!")
 	w.WriteHeader(http.StatusNotFound)
 }
 
