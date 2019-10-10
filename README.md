@@ -8,7 +8,7 @@ To run this example, follow these steps:
  - Run docker-compose stack:
 `sudo docker-compose up`
  - Build application
-`Makebuild`
+`make build`
  - Run application
 `./bin/golang-service-apm`
  -   Make requests to generate data on APM server
