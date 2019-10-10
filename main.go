@@ -22,29 +22,25 @@ func init() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	traceContextFields := apmlogrus.TraceContext(r.Context())
+	log.WithFields(traceContextFields).Debug("handling request")
 	query := r.URL.Query()
 	name := query.Get("name")
 	if name == "" {
 		name = "Guest"
 	}
 	log.Printf("Received request for %s\n", name)
-	w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
-}
-
-func handlerHi(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	name := query.Get("name")
-	if name == "" {
-		name = "Guest"
+	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
+	if err != nil {
+		log.Errorln(err.Error())
 	}
-	log.Printf("Received request for %s\n", name)
-	w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 }
 
 type NotFoundLogger struct{}
 
-func (nfl *NotFoundLogger) ServeHTTP(http.ResponseWriter, *http.Request) {
-	log.Errorln("Not found!")
+func (nfl *NotFoundLogger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Errorln("Not Found!")
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func main() {
@@ -52,11 +48,12 @@ func main() {
 	r := mux.NewRouter()
 
 	r.NotFoundHandler = &NotFoundLogger{}
+
 	apmgorilla.Instrument(r)
 
 	r.HandleFunc("/", handler)
 
-	r.HandleFunc("/hi", handlerHi)
+	r.HandleFunc("/hi", handler)
 
 	srv := &http.Server{
 		Handler:      r,
