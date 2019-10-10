@@ -10,15 +10,26 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/olivere/elastic/v7"
 	log "github.com/sirupsen/logrus"
 	"go.elastic.co/apm/module/apmgorilla"
 	"go.elastic.co/apm/module/apmlogrus"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"gopkg.in/sohlich/elogrus.v7"
 )
 
 func init() {
+	client, err := elastic.NewClient(elastic.SetURL("http://localhost:9200"))
+	if err != nil {
+		log.Panic(err)
+	}
+	hook, err := elogrus.NewAsyncElasticHook(client, "localhost", log.DebugLevel, "golang-")
+	if err != nil {
+		log.Panic(err)
+	}
 	// apmlogrus.Hook will send "error", "panic", and "fatal" level log messages to Elastic APM.
 	log.AddHook(&apmlogrus.Hook{})
+	log.AddHook(hook)
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
