@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"go.elastic.co/apm"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,19 +41,17 @@ func init() {
 	// apmlogrus.Hook will send "error", "panic", and "fatal" level log messages to Elastic APM.
 	log.AddHook(&apmlogrus.Hook{})
 	log.AddHook(hook)
+	log.SetLevel(log.DebugLevel)
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received request\n")
-	traceContextFields := apmlogrus.TraceContext(r.Context())
 	db := apmgorm.WithContext(r.Context(), dbConn)
-	contextLog := log.WithFields(traceContextFields)
-	query := r.URL.Query()
-	name := query.Get("name")
-	if name == "" {
-		name = "Guest"
+	contextLog := log.WithFields(apmlogrus.TraceContext(r.Context()))
+	name := getName(r)
+	var guestPersisted Guest
+	if !db.First(&guestPersisted, "name = ?", name).RecordNotFound() {
+		db.Delete(&guestPersisted)
 	}
-	contextLog.Printf("Received request for %s\n", name)
 	db.Create(&Guest{Name: name})
 	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 	if err != nil {
@@ -60,11 +59,24 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func getName(r *http.Request) string {
+	span, ctx := apm.StartSpan(r.Context(), "query.Get(\"name\")", "runtime.exec")
+	contextLog := log.WithFields(apmlogrus.TraceContext(ctx))
+	query := r.URL.Query()
+	name := query.Get("name")
+	if name == "" {
+		name = "Guest"
+	}
+	contextLog.Debugln("received request for", name)
+	span.End()
+	return name
+}
+
 type NotFoundLogger struct{}
 
 func (nfl *NotFoundLogger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	traceContextFields := apmlogrus.TraceContext(r.Context())
-	log.WithFields(traceContextFields).Errorln("Not Found!")
+	log.WithFields(traceContextFields).Errorln("unknown route error")
 	w.WriteHeader(http.StatusNotFound)
 }
 
