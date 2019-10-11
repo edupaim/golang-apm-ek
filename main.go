@@ -67,7 +67,7 @@ func initializeAndAddElasticHookToLogrus() {
 	log.AddHook(elasticHook)
 }
 
-func rootRouteHttpHandler(w http.ResponseWriter, r *http.Request) {
+func routeHttpHandler(w http.ResponseWriter, r *http.Request) {
 	name := getName(r)
 	sqliteIterate(r.Context(), name)
 	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
@@ -114,8 +114,8 @@ func main() {
 	r := mux.NewRouter()
 	r.NotFoundHandler = &NotFoundLogger{}
 	apmgorilla.Instrument(r)
-	r.HandleFunc("/", rootRouteHttpHandler)
-	r.HandleFunc("/hi", rootRouteHttpHandler)
+	r.HandleFunc("/", routeHttpHandler)
+	r.HandleFunc("/hi", routeHttpHandler)
 	srv := &http.Server{
 		Handler:      r,
 		Addr:         ":8080",
