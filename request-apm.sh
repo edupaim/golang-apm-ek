@@ -2,7 +2,6 @@
 
 while true
 do
-	timestamp=`date +"%s"`
 	if (( $RANDOM % 2 )); then
 		echo "Request to root \"/\" route"
 		curl localhost:8080?name=edu
