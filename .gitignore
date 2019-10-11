@@ -5,3 +5,4 @@ bin
 data_dir
 temp
 data
+test.db

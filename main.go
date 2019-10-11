@@ -30,45 +30,74 @@ type Guest struct {
 var dbConn *gorm.DB
 
 func init() {
-	client, err := elastic.NewClient(elastic.SetURL("http://localhost:9200"))
+	initializeAndAddElasticHookToLogrus()
+	initializeAndAddApmHookToLogrus()
+	initializeSqliteConn()
+}
+
+func initializeSqliteConn() {
+	var err error
+	dbConn, err = apmgorm.Open("sqlite3", "test.db")
 	if err != nil {
-		log.Panic(err)
+		panic("failed to connect database")
 	}
-	hook, err := elogrus.NewAsyncElasticHook(client, "localhost", log.DebugLevel, "golang-")
-	if err != nil {
-		log.Panic(err)
-	}
+	// Migrate the schema
+	dbConn.AutoMigrate(&Guest{})
+}
+
+func initializeAndAddApmHookToLogrus() {
 	// apmlogrus.Hook will send "error", "panic", and "fatal" level log messages to Elastic APM.
-	log.AddHook(&apmlogrus.Hook{})
-	log.AddHook(hook)
+	apmHook := &apmlogrus.Hook{}
+	apmHook.LogLevels = append(apmlogrus.DefaultLogLevels, log.WarnLevel)
+	log.AddHook(apmHook)
 	log.SetLevel(log.DebugLevel)
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	db := apmgorm.WithContext(r.Context(), dbConn)
-	contextLog := log.WithFields(apmlogrus.TraceContext(r.Context()))
-	name := getName(r)
-	var guestPersisted Guest
-	if !db.First(&guestPersisted, "name = ?", name).RecordNotFound() {
-		db.Delete(&guestPersisted)
+func initializeAndAddElasticHookToLogrus() {
+	client, err := elastic.NewClient(elastic.SetURL("http://localhost:9200"))
+	if err != nil {
+		// this fatal ensures that the application will not work if the elasticsearch service is not available.
+		log.Panic(err)
 	}
-	db.Create(&Guest{Name: name})
+	elasticHook, err := elogrus.NewAsyncElasticHook(client, "localhost", log.DebugLevel, "golang-")
+	if err != nil {
+		// this fatal ensures that the application will not work if the elasticsearch service is not available.
+		log.Panic(err)
+	}
+	log.AddHook(elasticHook)
+}
+
+func rootRouteHttpHandler(w http.ResponseWriter, r *http.Request) {
+	name := getName(r)
+	sqliteIterate(r.Context(), name)
 	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 	if err != nil {
+		contextLog := log.WithFields(apmlogrus.TraceContext(r.Context()))
 		contextLog.Errorln(err.Error())
 	}
 }
 
+func sqliteIterate(ctx context.Context, name string) {
+	var guestPersisted Guest
+	db := apmgorm.WithContext(ctx, dbConn)
+	if !db.First(&guestPersisted, "name = ?", name).RecordNotFound() {
+		db.Delete(&guestPersisted)
+	}
+	db.Create(&Guest{Name: name})
+}
+
 func getName(r *http.Request) string {
-	span, ctx := apm.StartSpan(r.Context(), "query.Get(\"name\")", "runtime.exec")
+	span, ctx := apm.StartSpan(r.Context(), "query.Get(\"name\")", "runtime.internal-getName")
+	defer span.End()
 	contextLog := log.WithFields(apmlogrus.TraceContext(ctx))
 	query := r.URL.Query()
 	name := query.Get("name")
 	if name == "" {
+		contextLog.Warningln("unknown guest")
 		name = "Guest"
+	} else {
+		contextLog.Debugln("received request for", name)
 	}
-	contextLog.Debugln("received request for", name)
-	span.End()
 	return name
 }
 
@@ -81,27 +110,12 @@ func (nfl *NotFoundLogger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	var err error
-	dbConn, err = apmgorm.Open("sqlite3", "test.db")
-	if err != nil {
-		panic("failed to connect database")
-	}
-	defer dbConn.Close()
-
-	// Migrate the schema
-	dbConn.AutoMigrate(&Guest{})
-
-	// Create Server and Route Handlers
+	// initialize router and route handlers
 	r := mux.NewRouter()
-
 	r.NotFoundHandler = &NotFoundLogger{}
-
 	apmgorilla.Instrument(r)
-
-	r.HandleFunc("/", handler)
-
-	r.HandleFunc("/hi", handler)
-
+	r.HandleFunc("/", rootRouteHttpHandler)
+	r.HandleFunc("/hi", rootRouteHttpHandler)
 	srv := &http.Server{
 		Handler:      r,
 		Addr:         ":8080",
@@ -109,19 +123,19 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// Configure Logging
-	LOG_FILE_LOCATION := os.Getenv("LOG_FILE_LOCATION")
-	if LOG_FILE_LOCATION != "" {
+	// set env LOG_FILE_LOCATION to log file
+	LogFileLocationEnv := os.Getenv("LOG_FILE_LOCATION")
+	if LogFileLocationEnv != "" {
 		log.SetOutput(&lumberjack.Logger{
-			Filename:   LOG_FILE_LOCATION,
-			MaxSize:    500, // megabytes
-			MaxBackups: 3,
-			MaxAge:     28,   //days
+			Filename:   LogFileLocationEnv,
+			MaxSize:    5, // megabytes
+			MaxBackups: 1,
+			MaxAge:     1,    //days
 			Compress:   true, // disabled by default
 		})
 	}
 
-	// Start Server
+	// start server
 	go func() {
 		log.Println("Starting Server")
 		if err := srv.ListenAndServe(); err != nil {
@@ -129,7 +143,7 @@ func main() {
 		}
 	}()
 
-	// Graceful Shutdown
+	// graceful shutdown
 	waitForShutdown(srv)
 }
 
@@ -137,15 +151,18 @@ func waitForShutdown(srv *http.Server) {
 	interruptChan := make(chan os.Signal, 1)
 	signal.Notify(interruptChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	// Block until we receive our signal.
+	// block until we receive our signal.
 	<-interruptChan
 
-	// Create a deadline to wait for.
+	// create a deadline to wait for.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	err := srv.Shutdown(ctx)
 	if err != nil {
 		log.Panicln(err.Error())
+	}
+	if dbConn != nil {
+		_ = dbConn.Close()
 	}
 	log.Println("Shutting down")
 	os.Exit(0)
