@@ -74,9 +74,11 @@ func routeHttpHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func responseRequest(w http.ResponseWriter, name string, r *http.Request) {
+	span, ctx := apm.StartSpan(r.Context(), "responseRequest()", "runtime.internal-getName")
+	defer span.End()
+	contextLog := log.WithFields(apmlogrus.TraceContext(ctx))
 	_, err := w.Write([]byte(fmt.Sprintf("hello, %s\n", name)))
 	if err != nil {
-		contextLog := log.WithFields(apmlogrus.TraceContext(r.Context()))
 		contextLog.Errorln(err.Error())
 	}
 }
@@ -91,7 +93,7 @@ func sqliteIterate(ctx context.Context, name string) {
 }
 
 func getName(r *http.Request) string {
-	span, ctx := apm.StartSpan(r.Context(), "query.Get(\"name\")", "runtime.internal-getName")
+	span, ctx := apm.StartSpan(r.Context(), "getName()", "runtime.internal-getName")
 	defer span.End()
 	contextLog := log.WithFields(apmlogrus.TraceContext(ctx))
 	query := r.URL.Query()
