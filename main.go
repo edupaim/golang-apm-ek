@@ -70,7 +70,11 @@ func initializeAndAddElasticHookToLogrus() {
 func routeHttpHandler(w http.ResponseWriter, r *http.Request) {
 	name := getName(r)
 	sqliteIterate(r.Context(), name)
-	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
+	responseRequest(w, name, r)
+}
+
+func responseRequest(w http.ResponseWriter, name string, r *http.Request) {
+	_, err := w.Write([]byte(fmt.Sprintf("hello, %s\n", name)))
 	if err != nil {
 		contextLog := log.WithFields(apmlogrus.TraceContext(r.Context()))
 		contextLog.Errorln(err.Error())
@@ -94,7 +98,7 @@ func getName(r *http.Request) string {
 	name := query.Get("name")
 	if name == "" {
 		contextLog.Warningln("unknown guest")
-		name = "Guest"
+		name = "guest"
 	} else {
 		contextLog.Debugln("received request for", name)
 	}
