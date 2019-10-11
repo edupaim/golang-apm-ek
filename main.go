@@ -10,13 +10,23 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/jinzhu/gorm"
 	"github.com/olivere/elastic/v7"
 	log "github.com/sirupsen/logrus"
 	"go.elastic.co/apm/module/apmgorilla"
+	"go.elastic.co/apm/module/apmgorm"
+	_ "go.elastic.co/apm/module/apmgorm/dialects/sqlite"
 	"go.elastic.co/apm/module/apmlogrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"gopkg.in/sohlich/elogrus.v7"
 )
+
+type Guest struct {
+	gorm.Model
+	Name string
+}
+
+var dbConn *gorm.DB
 
 func init() {
 	client, err := elastic.NewClient(elastic.SetURL("http://localhost:9200"))
@@ -33,7 +43,9 @@ func init() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Received request\n")
 	traceContextFields := apmlogrus.TraceContext(r.Context())
+	db := apmgorm.WithContext(r.Context(), dbConn)
 	contextLog := log.WithFields(traceContextFields)
 	query := r.URL.Query()
 	name := query.Get("name")
@@ -41,6 +53,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		name = "Guest"
 	}
 	contextLog.Printf("Received request for %s\n", name)
+	db.Create(&Guest{Name: name})
 	_, err := w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 	if err != nil {
 		contextLog.Errorln(err.Error())
@@ -56,6 +69,16 @@ func (nfl *NotFoundLogger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	var err error
+	dbConn, err = apmgorm.Open("sqlite3", "test.db")
+	if err != nil {
+		panic("failed to connect database")
+	}
+	defer dbConn.Close()
+
+	// Migrate the schema
+	dbConn.AutoMigrate(&Guest{})
+
 	// Create Server and Route Handlers
 	r := mux.NewRouter()
 
