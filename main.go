@@ -37,7 +37,7 @@ func init() {
 
 func initializeSqliteConn() {
 	var err error
-	dbConn, err = apmgorm.Open("sqlite3", "test.db")
+	dbConn, err = apmgorm.Open("sqlite3", "test.db?mode=memory")
 	if err != nil {
 		panic("failed to connect database")
 	}
@@ -68,13 +68,14 @@ func initializeAndAddElasticHookToLogrus() {
 }
 
 func routeHttpHandler(w http.ResponseWriter, r *http.Request) {
-	name := getName(r)
-	sqliteIterate(r.Context(), name)
-	responseRequest(w, name, r)
+	reqCtx := r.Context()
+	name := getName(r, reqCtx)
+	sqliteIterate(name, reqCtx)
+	responseRequest(w, name, reqCtx)
 }
 
-func responseRequest(w http.ResponseWriter, name string, r *http.Request) {
-	span, ctx := apm.StartSpan(r.Context(), "responseRequest()", "runtime.internal-getName")
+func responseRequest(w http.ResponseWriter, name string, reqCtx context.Context) {
+	span, ctx := apm.StartSpan(reqCtx, "responseRequest()", "runtime.responseHttp")
 	defer span.End()
 	contextLog := log.WithFields(apmlogrus.TraceContext(ctx))
 	_, err := w.Write([]byte(fmt.Sprintf("hello, %s\n", name)))
@@ -83,7 +84,9 @@ func responseRequest(w http.ResponseWriter, name string, r *http.Request) {
 	}
 }
 
-func sqliteIterate(ctx context.Context, name string) {
+func sqliteIterate(name string, ctx context.Context) {
+	span, ctx := apm.StartSpan(ctx, "sqliteIterate()", "runtime.sqliteIterate")
+	defer span.End()
 	var guestPersisted Guest
 	db := apmgorm.WithContext(ctx, dbConn)
 	if !db.First(&guestPersisted, "name = ?", name).RecordNotFound() {
@@ -92,8 +95,8 @@ func sqliteIterate(ctx context.Context, name string) {
 	db.Create(&Guest{Name: name})
 }
 
-func getName(r *http.Request) string {
-	span, ctx := apm.StartSpan(r.Context(), "getName()", "runtime.internal-getName")
+func getName(r *http.Request, reqCtx context.Context) string {
+	span, ctx := apm.StartSpan(reqCtx, "getName()", "runtime.getQueryUrl")
 	defer span.End()
 	contextLog := log.WithFields(apmlogrus.TraceContext(ctx))
 	query := r.URL.Query()
